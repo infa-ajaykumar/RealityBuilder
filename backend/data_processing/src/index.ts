@@ -1,7 +1,9 @@
 import amqp from 'amqplib';
 import { Client as PgClient } from 'pg';
 import { Client as EsClient } from '@elastic/elasticsearch';
-import { URL } from 'url'; // For parsing database URLs
+import { URL } from 'url';
+import NodeGeocoder from 'node-geocoder';
+import * as PropertyUtils from './utils'; // Import utilities
 
 // --- Configuration (from Environment Variables or Defaults) ---
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://user:password@rabbitmq_server';
@@ -12,9 +14,14 @@ const pgUrl = new URL(POSTGRES_URL);
 
 const ELASTICSEARCH_NODE = process.env.ELASTICSEARCH_NODE || 'http://elasticsearch_db:9200';
 const ELASTICSEARCH_INDEX = process.env.ELASTICSEARCH_INDEX || 'properties';
+const GEOCODER_PROVIDER = (process.env.GEOCODER_PROVIDER || 'openstreetmap') as NodeGeocoder.Providers;
+
+const LAT_DEG_THRESHOLD = parseFloat(process.env.DEDUPE_LAT_DEG_THRESHOLD || '0.0001'); // Approx 11 meters
+const LON_DEG_THRESHOLD = parseFloat(process.env.DEDUPE_LON_DEG_THRESHOLD || '0.0001'); // Approx 11 meters at equator
+const TITLE_SIMILARITY_THRESHOLD = parseFloat(process.env.DEDUPE_TITLE_SIMILARITY_THRESHOLD || '0.6'); // pg_trgm similarity
 
 // --- Elasticsearch Client Setup ---
-const esClient = new EsClient({ node: ELASTICSEARCH_NODE });
+const esClient = new EsClient({ node: ELASTICSEARCH_NODE, requestTimeout: 60000 });
 
 async function ensureIndexExists() {
     try {
@@ -27,15 +34,34 @@ async function ensureIndexExists() {
                 body: {
                     mappings: {
                         properties: {
-                            title: { type: 'text' },
-                            price: { type: 'float' }, // Assuming numeric price after normalization
-                            price_text: { type: 'keyword' },
+                            title: { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 } } }, // For fuzzy and exact match
+                            price_original_numeric: { type: 'float' },
+                            price_original_textual_display: { type: 'keyword' },
+                            currency_original: { type: 'keyword' },
+                            normalized_price_usd: { type: 'float' },
+
                             location_text: { type: 'text' },
-                            source_url: { type: 'keyword' }, // Good for exact matches/IDs
+                            address_raw: { type: 'text' },
+                            location_coordinates: { type: 'geo_point' },
+
+                            bedrooms: { type: 'integer' },
+                            bathrooms: { type: 'half_float' },
+
+                            area_original_value: { type: 'float' },
+                            area_unit_original: { type: 'keyword' },
+                            normalized_area_sqft: { type: 'float' },
+
+                            images: { type: 'keyword' },
+                            description: { type: 'text' },
+
+                            source_url: { type: 'keyword' },
                             date_posted: { type: 'date' },
                             source_name: { type: 'keyword' },
                             scrape_timestamp: { type: 'date' },
-                            // coordinates: { type: 'geo_point' } // For PostGIS equivalent
+
+                            status: { type: 'keyword' }, // New field for deduplication
+                            duplicate_of_property_id: { type: 'integer' }, // New field
+
                             created_at: { type: 'date' },
                             updated_at: { type: 'date' },
                         },
@@ -44,11 +70,13 @@ async function ensureIndexExists() {
             });
             console.log(`Elasticsearch index '${ELASTICSEARCH_INDEX}' created successfully.`);
         } else {
-            console.log(`Elasticsearch index '${ELASTICSEARCH_INDEX}' already exists.`);
+            console.log(`Elasticsearch index '${ELASTICSEARCH_INDEX}' already exists. Verifying/updating mapping...`);
+            // Optionally update mapping if it has changed. Be careful with existing data.
+            // Example: await esClient.indices.putMapping({ index: ELASTICSEARCH_INDEX, body: { properties: { ... } } });
         }
     } catch (error) {
-        console.error('Error ensuring Elasticsearch index exists:', error);
-        throw error; // Propagate error to stop service if ES is critical
+        console.error('Error ensuring Elasticsearch index exists/updated:', error);
+        throw error;
     }
 }
 
@@ -58,7 +86,7 @@ const pgClient = new PgClient({
     password: pgUrl.password,
     host: pgUrl.hostname,
     port: parseInt(pgUrl.port, 10),
-    database: pgUrl.pathname.slice(1), // Remove leading '/'
+    database: pgUrl.pathname.slice(1),
 });
 
 async function connectPg() {
@@ -67,56 +95,145 @@ async function connectPg() {
         console.log('Successfully connected to PostgreSQL.');
     } catch (error) {
         console.error('Error connecting to PostgreSQL:', error);
-        throw error; // Propagate error
+        throw error;
+    }
+}
+
+// --- Geocoder Setup ---
+const geocoderOptions: NodeGeocoder.Options = {
+    provider: GEOCODER_PROVIDER,
+};
+const geocoder = NodeGeocoder(geocoderOptions);
+
+
+// --- Deduplication Logic ---
+async function findPotentialDuplicates(property: any): Promise<any[]> {
+    if (property.latitude == null || property.longitude == null) {
+        console.log('Skipping duplicate check: missing coordinates for new property', property.source_url);
+        return [];
+    }
+
+    // Query for properties within a lat/lon bounding box, from a different source, and active
+    // Uses pg_trgm similarity for title matching.
+    const query = `
+        SELECT
+            id, title, source_name, latitude, longitude, status,
+            similarity(title, $1) as title_similarity
+        FROM properties
+        WHERE
+            status = 'active' AND
+            source_name != $2 AND
+            latitude BETWEEN $3 - ${LAT_DEG_THRESHOLD} AND $3 + ${LAT_DEG_THRESHOLD} AND
+            longitude BETWEEN $4 - ${LON_DEG_THRESHOLD} AND $4 + ${LON_DEG_THRESHOLD} AND
+            similarity(title, $1) >= ${TITLE_SIMILARITY_THRESHOLD}
+        ORDER BY title_similarity DESC, scrape_timestamp DESC;
+    `;
+    // Note: A spatial index (GIST on ST_MakePoint(longitude, latitude)) and ST_DWithin would be more accurate and performant for geo-proximity.
+    // This query is a simplified version using simple range checks.
+
+    try {
+        const { rows } = await pgClient.query(query, [
+            property.title,
+            property.source_name,
+            property.latitude,
+            property.longitude,
+        ]);
+        if (rows.length > 0) {
+            console.log(`Found ${rows.length} potential duplicate(s) for property title "${property.title}" from source "${property.source_name}"`);
+        }
+        return rows;
+    } catch (err) {
+        console.error('Error querying for duplicates:', err);
+        return [];
     }
 }
 
 
-// --- Data Normalization ---
-function normalizeData(messageContent: any): any {
-    const normalized = { ...messageContent };
+// --- Data Normalization & Processing ---
+async function normalizeAndProcessData(rawData: any): Promise<any> {
+    const processedData: any = { ...rawData };
 
-    // 1. Add/derive source_name
-    normalized.source_name = messageContent.source || "MockSiteScraper"; // Default if not present
-
-    // 2. Add scrape_timestamp
-    normalized.scrape_timestamp = new Date().toISOString();
-
-    // 3. Convert date_posted to a Date object (ISO string)
-    if (messageContent.date_posted && !(messageContent.date_posted instanceof Date)) {
-        try {
-            normalized.date_posted = new Date(messageContent.date_posted).toISOString();
-        } catch (e) {
-            console.warn(`Could not parse date_posted: ${messageContent.date_posted}, leaving as is.`);
-            normalized.date_posted = null; // Or keep original, or error out
-        }
-    } else if (messageContent.date_posted instanceof Date) {
-        normalized.date_posted = messageContent.date_posted.toISOString();
-    }
-
-
-    // 4. Ensure price is a number
-    normalized.price_text = messageContent.price; // Keep original price string
-    if (messageContent.price && typeof messageContent.price === 'string') {
-        const priceMatch = messageContent.price.match(/[\d,.]+/);
-        if (priceMatch) {
-            normalized.price = parseFloat(priceMatch[0].replace(/,/g, ''));
-        } else {
-            normalized.price = null; // Or some default / error
-        }
-    } else if (typeof messageContent.price === 'number') {
-        normalized.price = messageContent.price;
+    const parsedPrice = PropertyUtils.parsePrice(rawData.price_text || rawData.price);
+    processedData.price_original_numeric = parsedPrice.amount;
+    processedData.currency_original = parsedPrice.currency;
+    processedData.price_original_textual_display = rawData.price_text || rawData.price;
+    if (parsedPrice.amount && parsedPrice.currency) {
+        processedData.normalized_price_usd = PropertyUtils.convertToUSD(parsedPrice.amount, parsedPrice.currency);
     } else {
-        normalized.price = null;
+        processedData.normalized_price_usd = null;
     }
 
-    // Ensure all required fields for DB are present, with defaults if necessary
-    normalized.title = normalized.title || "N/A";
-    normalized.location_text = normalized.location_text || "N/A";
-    normalized.source_url = normalized.source_url || `N/A_${Date.now()}`; // Needs to be unique
+    const parsedArea = PropertyUtils.parseArea(rawData.area_text || rawData.area);
+    processedData.area_original_value = parsedArea.value;
+    processedData.area_unit_original = parsedArea.unit;
+    if (parsedArea.value && parsedArea.unit) {
+        processedData.normalized_area_sqft = PropertyUtils.convertToSqft(parsedArea.value, parsedArea.unit);
+    } else {
+        processedData.normalized_area_sqft = null;
+    }
 
-    return normalized;
+    processedData.bedrooms = PropertyUtils.parseBedrooms(rawData.bedrooms_text || rawData.bedrooms);
+    processedData.bathrooms = PropertyUtils.parseBathrooms(rawData.bathrooms_text || rawData.bathrooms);
+
+    processedData.location_text = rawData.location || rawData.location_text || null;
+    processedData.address_raw = processedData.location_text;
+
+    processedData.latitude = null;
+    processedData.longitude = null;
+    processedData.geocoded_data_raw = null;
+
+    if (processedData.address_raw) {
+        try {
+            const geoResult = await geocoder.geocode(processedData.address_raw);
+            if (geoResult && geoResult.length > 0) {
+                processedData.latitude = geoResult[0].latitude;
+                processedData.longitude = geoResult[0].longitude;
+                processedData.geocoded_data_raw = geoResult[0];
+            }
+        } catch (geoErr: any) {
+            console.error(`Geocoding error for "${processedData.address_raw}":`, geoErr.message || geoErr);
+        }
+    }
+
+    processedData.source_name = rawData.source_name || 'UnknownScraper';
+    processedData.scrape_timestamp = new Date().toISOString();
+    if (rawData.date_posted && !(rawData.date_posted instanceof Date)) {
+        try { processedData.date_posted = new Date(rawData.date_posted).toISOString(); }
+        catch (e) { processedData.date_posted = null; }
+    } else if (rawData.date_posted instanceof Date) {
+        processedData.date_posted = rawData.date_posted.toISOString();
+    } else {
+        processedData.date_posted = null;
+    }
+
+    if (!processedData.source_url) {
+      processedData.source_url = `missing_url_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+    if (!processedData.title) {
+      processedData.title = "Untitled Listing";
+    }
+    if (!Array.isArray(processedData.images)) {
+        processedData.images = processedData.images ? [processedData.images] : [];
+    }
+
+    // Initialize deduplication fields
+    processedData.status = 'active';
+    processedData.duplicate_of_property_id = null;
+
+    // Perform deduplication check
+    const duplicates = await findPotentialDuplicates(processedData);
+    if (duplicates.length > 0) {
+        // Basic strategy: mark as duplicate of the first found active record
+        // More advanced: scoring, merging logic, etc.
+        const primaryDuplicate = duplicates[0];
+        console.log(`Marking property ${processedData.source_url} as potential duplicate of property ID ${primaryDuplicate.id} (Title: "${primaryDuplicate.title}", Similarity: ${primaryDuplicate.title_similarity.toFixed(2)})`);
+        processedData.status = 'potential_duplicate';
+        processedData.duplicate_of_property_id = primaryDuplicate.id;
+    }
+
+    return processedData;
 }
+
 
 // --- RabbitMQ Consumer Logic ---
 async function startConsumer() {
@@ -133,134 +250,120 @@ async function startConsumer() {
         channel.consume(RABBITMQ_QUEUE, async (msg) => {
             if (msg !== null) {
                 let processingSuccess = false;
-                let propertyId: number | null = null;
-                let normalizedData: any = null;
+                let dataToStore: any = null;
 
                 try {
-                    console.log(`Received message: ${msg.content.toString().substring(0,100)}...`);
                     const rawData = JSON.parse(msg.content.toString());
-                    normalizedData = normalizeData(rawData);
+                    dataToStore = await normalizeAndProcessData(rawData);
 
                     // Store in PostgreSQL
                     const insertQuery = `
-                        INSERT INTO properties (title, price, price_text, location_text, source_url, date_posted, source_name, scrape_timestamp)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        INSERT INTO properties (
+                            title, price_original_numeric, price_original_textual_display, currency_original, normalized_price_usd,
+                            location_text, address_raw, latitude, longitude, geocoded_data_raw,
+                            bedrooms, bathrooms, area_original_value, area_unit_original, normalized_area_sqft,
+                            images, description, source_url, date_posted, source_name, scrape_timestamp,
+                            status, duplicate_of_property_id
+                        )
+                        VALUES (
+                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+                            $22, $23
+                        )
                         ON CONFLICT (source_url) DO UPDATE SET
                             title = EXCLUDED.title,
-                            price = EXCLUDED.price,
-                            price_text = EXCLUDED.price_text,
+                            price_original_numeric = EXCLUDED.price_original_numeric,
+                            price_original_textual_display = EXCLUDED.price_original_textual_display,
+                            currency_original = EXCLUDED.currency_original,
+                            normalized_price_usd = EXCLUDED.normalized_price_usd,
                             location_text = EXCLUDED.location_text,
+                            address_raw = EXCLUDED.address_raw,
+                            latitude = EXCLUDED.latitude,
+                            longitude = EXCLUDED.longitude,
+                            geocoded_data_raw = EXCLUDED.geocoded_data_raw,
+                            bedrooms = EXCLUDED.bedrooms,
+                            bathrooms = EXCLUDED.bathrooms,
+                            area_original_value = EXCLUDED.area_original_value,
+                            area_unit_original = EXCLUDED.area_unit_original,
+                            normalized_area_sqft = EXCLUDED.normalized_area_sqft,
+                            images = EXCLUDED.images,
+                            description = EXCLUDED.description,
                             date_posted = EXCLUDED.date_posted,
+                            source_name = EXCLUDED.source_name,
                             scrape_timestamp = EXCLUDED.scrape_timestamp,
+                            status = EXCLUDED.status, -- Allow status update on conflict
+                            duplicate_of_property_id = EXCLUDED.duplicate_of_property_id, -- Allow update
                             updated_at = CURRENT_TIMESTAMP
                         RETURNING id;
                     `;
                     const pgRes = await pgClient.query(insertQuery, [
-                        normalizedData.title,
-                        normalizedData.price,
-                        normalizedData.price_text,
-                        normalizedData.location_text,
-                        normalizedData.source_url,
-                        normalizedData.date_posted,
-                        normalizedData.source_name,
-                        normalizedData.scrape_timestamp,
+                        dataToStore.title, dataToStore.price_original_numeric, dataToStore.price_original_textual_display, dataToStore.currency_original, dataToStore.normalized_price_usd,
+                        dataToStore.location_text, dataToStore.address_raw, dataToStore.latitude, dataToStore.longitude, dataToStore.geocoded_data_raw,
+                        dataToStore.bedrooms, dataToStore.bathrooms, dataToStore.area_original_value, dataToStore.area_unit_original, dataToStore.normalized_area_sqft,
+                        dataToStore.images, dataToStore.description, dataToStore.source_url, dataToStore.date_posted, dataToStore.source_name, dataToStore.scrape_timestamp,
+                        dataToStore.status, dataToStore.duplicate_of_property_id
                     ]);
 
-                    propertyId = pgRes.rows[0]?.id;
-                    if (propertyId) {
-                        console.log(`Data inserted/updated in PostgreSQL with ID: ${propertyId}`);
-                    } else {
-                         // If ON CONFLICT DO NOTHING and it conflicted, ID might not be returned.
-                        // For DO UPDATE, ID should be returned.
-                        // If not, we might need to query for it if ES needs it.
-                        // For now, assume ID is returned or source_url is a good enough ES ID.
-                        console.log(`Data processed for PostgreSQL (source_url: ${normalizedData.source_url}). ID may not be returned if conflict resulted in no action or if RETURNING id is not supported in that specific conflict case.`);
-                    }
-
+                    const propertyId = pgRes.rows[0]?.id;
 
                     // Index in Elasticsearch
-                    // Use source_url as ID for idempotency if propertyId is not reliably fetched on conflict.
-                    const esId = normalizedData.source_url; // Using source_url as ES ID
+                    const esId = dataToStore.source_url;
+                    const esDocument: any = { ...dataToStore };
+                    if (dataToStore.latitude !== null && dataToStore.longitude !== null) {
+                        esDocument.location_coordinates = { lat: dataToStore.latitude, lon: dataToStore.longitude };
+                    }
 
-                    await esClient.index({
-                        index: ELASTICSEARCH_INDEX,
-                        id: esId, // Use source_url as document ID
-                        body: {
-                            ...normalizedData,
-                            // pg_id: propertyId, // Optionally store PG ID
-                        },
-                    });
-                    console.log(`Data indexed in Elasticsearch with ID (source_url): ${esId}`);
+                    await esClient.index({ index: ELASTICSEARCH_INDEX, id: esId, body: esDocument });
+                    if (propertyId) console.log(`Data for ID ${propertyId} (source_url: ${esId}) processed, status: ${dataToStore.status}.`);
 
                     processingSuccess = true;
 
-                } catch (error) {
-                    console.error('Error processing message:', error);
-                    if (normalizedData) {
-                        console.error('Failed data:', JSON.stringify(normalizedData, null, 2));
-                    } else {
-                        console.error('Failed raw message content:', msg.content.toString());
-                    }
-                    // processingSuccess remains false
+                } catch (error: any) {
+                    console.error('Error processing message:', error.message || error);
                 } finally {
                     if (processingSuccess) {
                         channel.ack(msg);
-                        console.log("Message acknowledged.");
                     } else {
-                        // Decide whether to requeue or send to a dead-letter queue
-                        // For now, nack without requeue to avoid processing loops for bad messages
                         channel.nack(msg, false, false);
                         console.log("Message nacked (not requeued).");
                     }
                 }
             }
-        }, { noAck: false }); // Manual acknowledgment
+        }, { noAck: false });
 
     } catch (error) {
         console.error('Failed to connect or setup RabbitMQ consumer:', error);
-        // Implement retry logic or graceful shutdown if needed
         if (connection) await connection.close();
-        throw error; // Propagate error to stop service if RabbitMQ is critical
+        throw error;
     }
 }
 
 // --- Main Application Logic ---
 async function main() {
-    console.log('Starting data processing service...');
+    console.log('Starting data processing service (deduplication enhanced)...');
     try {
         await connectPg();
-        await ensureIndexExists(); // Ensure ES index is ready before consuming
+        await ensureIndexExists();
         await startConsumer();
         console.log('Data processing service is running and waiting for messages.');
     } catch (error) {
         console.error('Failed to initialize or run the data processing service:', error);
-        // Consider exiting the process if critical components fail to initialize
         process.exit(1);
     }
 }
 
 main();
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-    console.log('SIGINT received. Shutting down gracefully...');
-    try {
-        await pgClient.end();
-        console.log('PostgreSQL client disconnected.');
-        // RabbitMQ connection should be closed by amqp library on process exit or handled in startConsumer's error/finally blocks
-    } catch (error) {
-        console.error('Error during graceful shutdown:', error);
-    }
-    process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-    console.log('SIGTERM received. Shutting down gracefully...');
-    try {
-        await pgClient.end();
-        console.log('PostgreSQL client disconnected.');
-    } catch (error) {
-        console.error('Error during graceful shutdown:', error);
-    }
-    process.exit(0);
+const signals = ['SIGINT', 'SIGTERM'];
+signals.forEach(signal => {
+    process.on(signal, async () => {
+        console.log(`${signal} received. Shutting down gracefully...`);
+        try {
+            if (pgClient) await pgClient.end();
+            console.log('PostgreSQL client disconnected.');
+        } catch (error) {
+            console.error('Error during graceful shutdown:', error);
+        }
+        process.exit(0);
+    });
 });

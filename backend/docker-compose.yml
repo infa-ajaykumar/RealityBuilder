@@ -102,3 +102,25 @@ volumes:
 networks:
   backend_network:
     driver: bridge
+
+  advanced_scraper_puppeteer:
+    build:
+      context: ./scraper_workers/advanced_scraper_puppeteer
+    container_name: advanced_scraper_puppeteer_service
+    restart: 'no' # Scrapers are often run on a schedule or manually
+    depends_on:
+      - rabbitmq # Ensure RabbitMQ is up before this service starts
+    environment:
+      RABBITMQ_URL: "amqp://user:password@rabbitmq_server"
+      RABBITMQ_QUEUE: "property_listings_raw"
+      TARGET_URL: "http://example-dynamic-site.com/listings" # Placeholder URL, replace with a real one for testing
+      SOURCE_NAME: "DynamicSiteScraper"
+      PUPPETEER_HEADLESS: "true" # Controls headless mode via environment
+      NODE_ENV: "development" # Set to "production" for optimized builds if applicable
+      # DEBUG: "puppeteer:*" # Uncomment for verbose Puppeteer logs
+    networks:
+      - backend_network
+    # For some environments, if --no-sandbox and other args in puppeteer.launch are not enough,
+    # you might need to add escalated privileges. This is generally discouraged if avoidable.
+    # cap_add:
+    #   - SYS_ADMIN
