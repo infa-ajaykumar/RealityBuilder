@@ -1,13 +1,25 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
 import amqp from 'amqplib';
-import os from 'os'; // For User-Agent
+import os from 'os';
 
 // --- Configuration (from Environment Variables or Defaults) ---
-const TARGET_URL = process.env.TARGET_URL || 'https://example-dynamic-realestate.com/listings'; // Replace with a real target for testing
+const TARGET_URL = process.env.TARGET_URL || 'https://example-dynamic-realestate.com/listings';
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://user:password@rabbitmq_server';
 const RABBITMQ_QUEUE = process.env.RABBITMQ_QUEUE || 'property_listings_raw';
 const SOURCE_NAME = process.env.SOURCE_NAME || 'DynamicSiteScraper';
-const HEADLESS_MODE = process.env.PUPPETEER_HEADLESS !== 'false'; // Default to true (headless)
+const HEADLESS_MODE = process.env.PUPPETEER_HEADLESS !== 'false';
+
+// Proxy Configuration
+const HTTP_PROXIES_STRING = process.env.HTTP_PROXIES || '';
+const PROXIES_LIST = HTTP_PROXIES_STRING.split(',').map(p => p.trim()).filter(p => p);
+let selectedProxy: string | null = null;
+
+if (PROXIES_LIST.length > 0) {
+    selectedProxy = PROXIES_LIST[Math.floor(Math.random() * PROXIES_LIST.length)];
+    console.log(`Advanced Scraper: Using proxy: ${selectedProxy}`);
+} else {
+    console.log("Advanced Scraper: No proxies configured or list is empty. Using direct connection.");
+}
 
 // --- Helper: Random Delay ---
 function randomDelay(min = 1000, max = 3000) {
@@ -23,19 +35,18 @@ async function setupRabbitMQ(): Promise<amqp.Channel | null> {
         await channel.assertQueue(RABBITMQ_QUEUE, { durable: true });
         console.log(`RabbitMQ connected and queue '${RABBITMQ_QUEUE}' asserted.`);
 
-        // Graceful shutdown for RabbitMQ connection
-        process.on('SIGINT', async () => {
-            console.log('SIGINT received. Closing RabbitMQ connection...');
-            await channel.close();
-            await connection.close();
-            process.exit(0);
-        });
-         process.on('SIGTERM', async () => {
-            console.log('SIGTERM received. Closing RabbitMQ connection...');
-            await channel.close();
-            await connection.close();
-            process.exit(0);
-        });
+        const gracefulShutdownRabbit = async () => {
+            console.log('Closing RabbitMQ connection...');
+            try {
+                if (channel && !channel.connection?.closeForced) await channel.close();
+                if (connection && !connection.closeForced) await connection.close();
+            } catch (e) {
+                console.error("Error closing RabbitMQ resources", e);
+            }
+        };
+
+        process.on('SIGINT', gracefulShutdownRabbit);
+        process.on('SIGTERM', gracefulShutdownRabbit);
 
         return channel;
     } catch (error) {
@@ -47,17 +58,15 @@ async function setupRabbitMQ(): Promise<amqp.Channel | null> {
 // --- Property Detail Scraping Function ---
 async function scrapePropertyDetails(
     detailPageUrl: string,
-    browser: Browser,
+    browser: Browser, // Pass browser instance to open new pages
     rabbitmqChannel: amqp.Channel
 ): Promise<void> {
     let detailPage: Page | null = null;
     console.log(`Scraping details from: ${detailPageUrl}`);
     try {
         detailPage = await browser.newPage();
-        await detailPage.setUserAgent(`Mozilla/5.0 (${os.platform()}; ${os.arch()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36`); // Example User Agent
+        await detailPage.setUserAgent(`Mozilla/5.0 (${os.platform()} ${os.release()}; ${os.arch()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36`);
         await detailPage.goto(detailPageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-
-        // Wait for a key element to ensure page is loaded
         await detailPage.waitForSelector('.property-title', { timeout: 30000 });
 
         const title = await detailPage.$eval('.property-title', el => el.textContent?.trim() || '').catch(() => null);
@@ -70,129 +79,103 @@ async function scrapePropertyDetails(
         const description = await detailPage.$eval('.property-description', el => el.innerHTML.trim() || '').catch(() => null);
         const datePostedText = await detailPage.$eval('.property-date-posted', el => el.textContent?.trim() || '').catch(() => null);
 
-        // Basic parsing (more robust parsing needed for production)
         const bedrooms = bedroomsText ? parseInt(bedroomsText.match(/\d+/)?.[0] || '0') : null;
         const bathrooms = bathroomsText ? parseFloat(bathroomsText.match(/[\d.]+/)?.[0] || '0') : null;
-
         let date_posted: string | null = null;
-        if (datePostedText) {
-            try {
-                date_posted = new Date(datePostedText).toISOString();
-            } catch (e) { console.warn(`Could not parse date: ${datePostedText}`); }
-        }
-
+        if (datePostedText) { try { date_posted = new Date(datePostedText).toISOString(); } catch (e) { /* ignore */ } }
 
         const propertyData = {
-            title,
-            price_text: price, // Store original price string
-            location_text: location,
-            bedrooms,
-            bathrooms,
-            area_text: areaText, // Store original area string
-            images,
-            description,
-            source_url: detailPageUrl,
-            date_posted,
-            source_name: SOURCE_NAME,
-            scrape_timestamp: new Date().toISOString(),
+            title, price_text: price, location_text: location, bedrooms, bathrooms,
+            area_text: areaText, images, description, source_url: detailPageUrl,
+            date_posted, source_name: SOURCE_NAME, scrape_timestamp: new Date().toISOString(),
         };
 
         rabbitmqChannel.sendToQueue(RABBITMQ_QUEUE, Buffer.from(JSON.stringify(propertyData)), { persistent: true });
-        console.log(`Sent to RabbitMQ: ${propertyData.title?.substring(0,50)}... (URL: ${detailPageUrl})`);
+        console.log(`Sent to RabbitMQ: ${propertyData.title?.substring(0,50)}...`);
 
     } catch (error) {
         console.error(`Error scraping detail page ${detailPageUrl}:`, error);
     } finally {
-        if (detailPage) await detailPage.close();
-        await randomDelay(); // Delay after closing a detail page
+        if (detailPage && !detailPage.isClosed()) await detailPage.close().catch(e => console.error("Error closing detail page", e));
+        await randomDelay();
     }
 }
 
 // --- Main Scraping Logic ---
 async function scrapeSite(rabbitmqChannel: amqp.Channel): Promise<void> {
     console.log(`Starting scrape for target URL: ${TARGET_URL}`);
+
+    const launchArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu'
+    ];
+    if (selectedProxy) {
+        launchArgs.push(`--proxy-server=${selectedProxy}`);
+    }
+
     const browser = await puppeteer.launch({
         headless: HEADLESS_MODE,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage', // Often needed in Docker
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            // '--single-process', // Currently causing issues with page.close()
-            '--disable-gpu'
-        ]
+        args: launchArgs,
     });
 
     let mainPage: Page | null = null;
 
     try {
         mainPage = await browser.newPage();
-        await mainPage.setUserAgent(`Mozilla/5.0 (${os.platform()}; ${os.arch()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36`);
+        await mainPage.setUserAgent(`Mozilla/5.0 (${os.platform()} ${os.release()}; ${os.arch()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36`);
         await mainPage.setViewport({ width: 1280, height: 800 });
 
-
-        let currentPageUrl = TARGET_URL;
+        let currentPageUrl: string | null = TARGET_URL;
         let pageNum = 1;
 
         while (currentPageUrl) {
             console.log(`Scraping listing page ${pageNum}: ${currentPageUrl}`);
             await mainPage.goto(currentPageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-            await mainPage.waitForSelector('.property-item', { timeout: 30000 }); // Placeholder for a listing item
+            await mainPage.waitForSelector('.property-item', { timeout: 30000 });
 
             const propertyItems = await mainPage.$$('.property-item');
             console.log(`Found ${propertyItems.length} property items on page ${pageNum}.`);
 
             for (const item of propertyItems) {
                 try {
-                    const detailLinkSelector = 'a.property-link'; // Placeholder
-                    // Ensure element is visible and interactable before eval
+                    const detailLinkSelector = 'a.property-link';
                     await item.waitForSelector(detailLinkSelector, {visible: true, timeout: 5000 });
                     const detailPageUrl = await item.$eval(detailLinkSelector, el => (el as HTMLAnchorElement).href);
                     if (detailPageUrl) {
                         await scrapePropertyDetails(detailPageUrl, browser, rabbitmqChannel);
-                    } else {
-                        console.warn('Could not find detail page URL for an item.');
-                    }
-                } catch (e) {
-                    console.error('Error extracting detail link from item:', e);
-                }
+                    } else { console.warn('Could not find detail page URL.'); }
+                } catch (e) { console.error('Error extracting detail link:', e); }
             }
 
-            // Pagination logic
             try {
-                const nextButtonSelector = '.pagination .next a'; // Placeholder
+                const nextButtonSelector = '.pagination .next a';
                 const nextButton = await mainPage.$(nextButtonSelector);
                 if (nextButton) {
                     currentPageUrl = await mainPage.$eval(nextButtonSelector, el => (el as HTMLAnchorElement).href);
                     console.log(`Found next page link: ${currentPageUrl}`);
                     pageNum++;
-                    await randomDelay(2000,5000); // Delay before loading next page
-                } else {
-                    console.log('No next page button found. Ending pagination.');
-                    currentPageUrl = ''; // or null
-                }
-            } catch (e) {
-                console.log('Error finding or processing next page button. Ending pagination.', e);
-                currentPageUrl = ''; // or null
-            }
+                    await randomDelay(2000,5000);
+                } else { console.log('No next page button. Ending pagination.'); currentPageUrl = null; }
+            } catch (e) { console.log('Error finding next page. Ending pagination.', e); currentPageUrl = null; }
         }
-
         console.log('Finished scraping all pages.');
-
     } catch (error) {
         console.error('Error in main scraping site logic:', error);
     } finally {
-        if (mainPage && !mainPage.isClosed()) await mainPage.close();
-        if (browser) await browser.close();
+        if (mainPage && !mainPage.isClosed()) await mainPage.close().catch(e => console.error("Error closing main page", e));
+        if (browser) await browser.close().catch(e => console.error("Error closing browser", e));
         console.log('Browser closed.');
     }
 }
 
 // --- Main Execution Block ---
 async function main() {
-    console.log(`Advanced Puppeteer scraper starting... (Headless: ${HEADLESS_MODE})`);
+    console.log(`Advanced Puppeteer scraper starting... (Headless: ${HEADLESS_MODE}, Proxy: ${selectedProxy || 'None'})`);
     const rabbitmqChannel = await setupRabbitMQ();
 
     if (rabbitmqChannel) {
@@ -201,23 +184,14 @@ async function main() {
         } catch (error) {
             console.error('Critical error during scraping process:', error);
         } finally {
-            // Channel and connection are closed by SIGINT/SIGTERM handlers
-            // or should be closed here if error is not propagated from setupRabbitMQ
-            if (!process.env.LISTENING_TO_SIGNALS) { // Basic check; better signal handling is in setupRabbitMQ
-                 try {
-                    await rabbitmqChannel.close();
-                    await rabbitmqChannel.connection.close();
-                    console.log("RabbitMQ connection closed from main's finally block.");
-                } catch (e) {
-                    console.error("Error closing RabbitMQ from main's finally block", e);
-                }
-            }
+            // RabbitMQ connection is closed via SIGINT/SIGTERM handlers in setupRabbitMQ
+             console.log("Scraping process complete. RabbitMQ connection will be closed on process exit.");
         }
     } else {
         console.error('Could not establish RabbitMQ channel. Scraper cannot run.');
-        process.exit(1); // Exit if no RabbitMQ
+        process.exit(1);
     }
-    console.log('Advanced Puppeteer scraper finished.');
+    console.log('Advanced Puppeteer scraper finished main execution block.');
 }
 
 main().catch(err => {

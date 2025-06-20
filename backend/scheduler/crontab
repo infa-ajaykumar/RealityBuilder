@@ -1,0 +1,10 @@
+# This file should be named 'scheduler-tasks' and placed in /etc/cron.d/
+# Make sure each line ends with a newline character.
+
+# Example: Run craigslist_scraper every hour at minute 0
+0 * * * * cd /app && docker-compose -f docker-compose.yml run --rm craigslist_scraper >> /var/log/cron_jobs.log 2>&1
+
+# Example: Run advanced_scraper_puppeteer every 2 hours at minute 30
+30 */2 * * * cd /app && docker-compose -f docker-compose.yml run --rm advanced_scraper_puppeteer >> /var/log/cron_jobs.log 2>&1
+
+# An empty line is required at the end of the file for cron to parse it correctly.

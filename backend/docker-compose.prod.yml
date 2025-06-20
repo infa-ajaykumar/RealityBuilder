@@ -1,0 +1,98 @@
+version: '3.8'
+
+# Production-like Overrides
+# This file should be used in conjunction with the base docker-compose.yml:
+# docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  # Application Services
+  api_service:
+    environment:
+      NODE_ENV: production
+      # Example: For production, you might want to adjust logging
+      # API_LOG_LEVEL: warn
+      # Ensure other sensitive variables (DB pass, etc.) are managed via .env or secrets
+    ports:
+      # In production, you'd typically put this behind a reverse proxy (Nginx, Traefik, Caddy)
+      # and might not expose the port directly on the host.
+      # If exposed, ensure firewall rules are in place.
+      # For this example, we keep the mapping from the base for simplicity of direct access if needed.
+      - "3000:3000"
+    restart: unless-stopped
+
+  data_processing:
+    environment:
+      NODE_ENV: production
+      # DATA_PROCESSING_LOG_LEVEL: warn
+    restart: unless-stopped
+
+  # Scrapers - typically run on a schedule, not continuously
+  advanced_scraper_puppeteer:
+    environment:
+      NODE_ENV: production
+      PUPPETEER_HEADLESS: "true" # Ensure headless is true for production
+      # Example: Potentially use different, more robust proxies for production
+      # HTTP_PROXIES: "${HTTP_PROXIES_PROD}" # Requires HTTP_PROXIES_PROD in .env
+    restart: 'no' # Or 'on-failure' if you want retries for scheduled runs that fail
+
+  craigslist_scraper:
+    # environment: # Python app, no NODE_ENV. Define other prod-specific env vars if needed.
+      # HTTP_PROXIES: "${HTTP_PROXIES_PROD}"
+    restart: 'no'
+
+  # Infrastructure Services
+  scheduler:
+    restart: unless-stopped # Scheduler should generally always be running
+
+  postgres_db:
+    ports:
+      # For production, it's safer not to expose database ports directly to the internet.
+      # Access should be limited to the Docker internal network or specific IPs via firewall.
+      # Binding to 127.0.0.1 allows access only from the host machine if needed for maintenance.
+      - "127.0.0.1:5432:5432"
+    environment:
+      # Ensure POSTGRES_PASSWORD is strong and set via .env or Docker secrets in real prod.
+      # Other parameters like shared_buffers, effective_cache_size could be tuned here.
+      # e.g. POSTGRES_INITDB_ARGS: "--auth-host=md5 --auth-local=md5"
+      # e.g. POSTGRES_HOST_AUTH_METHOD: "scram-sha-256\nlocal all all scram-sha-256"
+    restart: unless-stopped
+    # Volume configuration from base docker-compose.yml is used. Ensure robust backup strategy for postgres_data.
+
+  elasticsearch_db:
+    ports:
+      # Similar to PostgreSQL, limit direct external access in production.
+      - "127.0.0.1:9200:9200"
+      # - "127.0.0.1:9300:9300" # Inter-node communication, usually not needed for single-node
+    environment:
+      # For production, consider increasing memory allocation if needed, e.g., "-Xms1g -Xmx1g"
+      # ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+      # IMPORTANT: In a real production scenario, enable and configure X-Pack security.
+      # XPACK_SECURITY_ENABLED: "true" # And configure users, roles, TLS, etc.
+      # For this example, we keep it simple and inherit 'false' from the base for local "prod-like" testing.
+      XPACK_SECURITY_ENABLED: "false"
+      DISCOVERY_TYPE: "single-node" # Still single-node for this setup
+    restart: unless-stopped
+    # Volume configuration from base docker-compose.yml is used. Ensure robust backup strategy for elasticsearch_data.
+
+  rabbitmq:
+    ports:
+      # Limit direct external access. Management UI might be behind auth or VPN.
+      # "5672:5672" # AMQP port
+      - "127.0.0.1:15672:15672" # Management UI accessible only from host
+    restart: unless-stopped
+    # Ensure credentials are strong (set via .env) and consider production policies (clustering, persistence modes).
+
+  redis_cache:
+    ports:
+      # Limit direct external access.
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+    # Consider Redis security (e.g., requirepass) and persistence options if needed beyond cache.
+
+# Volumes are defined in the base docker-compose.yml and will be used by default.
+# Networks are defined in the base docker-compose.yml and will be used by default.
+# For production, ensure your Docker host is secured, firewall configured,
+# and regular backups of persistent data (postgres_data, elasticsearch_data, redis_data if persistent) are taken.
+# Consider using Docker Secrets for managing sensitive information like passwords.
+# This docker-compose.prod.yml provides basic overrides for a "production-like" local or simple server deployment.
+# For complex production setups, consider Kubernetes or managed cloud services.

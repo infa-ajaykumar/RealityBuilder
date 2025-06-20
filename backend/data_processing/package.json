@@ -2,10 +2,12 @@
   "name": "data_processing",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc"
+    "test": "jest",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -13,10 +15,13 @@
   "type": "commonjs",
   "devDependencies": {
     "@types/amqplib": "^0.10.7",
+    "@types/jest": "^30.0.0",
     "@types/node": "^24.0.3",
     "@types/node-geocoder": "^4.2.6",
     "@types/pg": "^8.15.4",
+    "jest": "^30.0.2",
     "nodemon": "^3.1.10",
+    "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"
   },
