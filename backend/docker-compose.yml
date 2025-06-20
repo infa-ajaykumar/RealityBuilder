@@ -84,13 +84,20 @@ services:
     container_name: api_service_node
     ports:
       - "3000:3000" # Expose API port to host
-    depends_on:
-      - postgres_db # Depends on PostgreSQL being available
-      # - data_processing # Optional: if API should wait for data processor
     environment:
       POSTGRES_URL: postgresql://user:password@postgres_db:5432/real_estate_db
       PORT: 3000
+      ELASTICSEARCH_NODE: http://elasticsearch_db:9200
+      ELASTICSEARCH_INDEX: properties
+      REDIS_URL: redis://redis_cache_service:6379 # Added for Redis connection
+      CACHE_TTL_PROPERTIES: "300" # 5 minutes
+      CACHE_TTL_METADATA: "600"   # 10 minutes
       NODE_ENV: development # Or production
+    depends_on:
+      - postgres_db
+      - elasticsearch_db
+      - redis_cache_service # Added dependency for Redis
+      # - data_processing # Optional: if API should wait for data processor
     networks:
       - backend_network
 
@@ -102,6 +109,17 @@ volumes:
 networks:
   backend_network:
     driver: bridge
+
+  redis_cache:
+    image: redis:7-alpine
+    container_name: redis_cache_service
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend_network
+    restart: always
 
   advanced_scraper_puppeteer:
     build:
