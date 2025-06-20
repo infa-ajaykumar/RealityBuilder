@@ -2,10 +2,12 @@
   "name": "api_service",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc"
+    "test": "jest",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -15,13 +17,17 @@
     "@elastic/elasticsearch": "^9.0.2",
     "express": "^5.1.0",
     "ioredis": "^5.6.1",
-    "pg": "^8.16.2"
+    "pg": "^8.16.2",
+    "rate-limiter-flexible": "^7.1.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
+    "@types/jest": "^30.0.0",
     "@types/node": "^24.0.3",
     "@types/pg": "^8.15.4",
+    "jest": "^30.0.2",
     "nodemon": "^3.1.10",
+    "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"
   }

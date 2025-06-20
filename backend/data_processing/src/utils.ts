@@ -21,15 +21,16 @@ export function parsePrice(priceString: string | null | undefined): ParsedPrice 
 
     let amount: number | null = null;
     let currency: string | null = null;
+    const priceStringLower = priceString.toLowerCase(); // Correctly define and use lowercased string
 
     // Attempt to extract currency symbol or code first
-    if (priceString.includes('$') || priceString.toLowerCase().includes('usd')) {
+    if (priceString.includes('$') || priceStringLower.includes('usd')) {
         currency = 'USD';
-    } else if (priceString.includes('€') || price_string_lower.includes('eur')) {
+    } else if (priceString.includes('€') || priceStringLower.includes('eur')) {
         currency = 'EUR';
-    } else if (priceString.toLowerCase().includes('cad')) {
+    } else if (priceStringLower.includes('cad')) {
         currency = 'CAD';
-    } else if (priceString.includes('£') || price_string_lower.includes('gbp')) {
+    } else if (priceString.includes('£') || priceStringLower.includes('gbp')) {
         currency = 'GBP';
     }
     // Add more currency detections as needed...
@@ -190,6 +191,3 @@ export function parseBathrooms(bathroomString: string | null | undefined): numbe
     }
     return null;
 }
-
-// Helper for price string lowercasing, used in parsePrice
-const price_string_lower = (priceString: string) => priceString.toLowerCase();
