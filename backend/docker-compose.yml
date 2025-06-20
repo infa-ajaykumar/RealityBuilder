@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq_server
+    ports:
+      - "5672:5672"  # AMQP port for clients
+      - "15672:15672" # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: password
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - backend_network
+
+  craigslist_scraper:
+    build:
+      context: ./scraper_workers/craigslist_scraper
+    container_name: craigslist_scraper_worker
+    depends_on:
+      - rabbitmq
+    environment:
+      RABBITMQ_HOST: rabbitmq_server # Matches the service name of RabbitMQ
+      RABBITMQ_USER: user
+      RABBITMQ_PASS: password
+      RABBITMQ_QUEUE: property_listings_raw
+    networks:
+      - backend_network
+
+  postgres_db:
+    image: postgis/postgis:15-3.3
+    container_name: postgres_db_container
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: real_estate_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database_setup:/docker-entrypoint-initdb.d # Mount init scripts
+    networks:
+      - backend_network
+    shm_size: '1g' # Recommended for PostGIS
+
+  elasticsearch_db:
+    image: elasticsearch:8.11.0
+    container_name: elasticsearch_db_container
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      xpack.security.enabled: "false" # Ensure this is a string if YAML parses it as boolean
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - backend_network
+
+  data_processing:
+    build:
+      context: ./data_processing
+    container_name: data_processing_service
+    depends_on:
+      - rabbitmq
+      - postgres_db
+      - elasticsearch_db
+    environment:
+      RABBITMQ_URL: amqp://user:password@rabbitmq_server
+      RABBITMQ_QUEUE: property_listings_raw
+      POSTGRES_URL: postgresql://user:password@postgres_db:5432/real_estate_db
+      ELASTICSEARCH_NODE: http://elasticsearch_db:9200
+      ELASTICSEARCH_INDEX: properties
+      NODE_ENV: development # Or production, depending on needs
+    networks:
+      - backend_network
+
+  api_service:
+    build:
+      context: ./api_service
+    container_name: api_service_node
+    ports:
+      - "3000:3000" # Expose API port to host
+    depends_on:
+      - postgres_db # Depends on PostgreSQL being available
+      # - data_processing # Optional: if API should wait for data processor
+    environment:
+      POSTGRES_URL: postgresql://user:password@postgres_db:5432/real_estate_db
+      PORT: 3000
+      NODE_ENV: development # Or production
+    networks:
+      - backend_network
+
+volumes:
+  rabbitmq_data: # Defines the named volume for RabbitMQ
+  postgres_data:   # Defines the named volume for PostgreSQL
+  elasticsearch_data: # Defines the named volume for Elasticsearch
+
+networks:
+  backend_network:
+    driver: bridge
