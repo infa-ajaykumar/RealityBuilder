@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS properties (
     -- Property attributes
     bedrooms INTEGER,
     bathrooms NUMERIC(4,1),
+    property_type VARCHAR(100), -- New field for property type (e.g., 'Apartment', 'House', 'Condo')
 
     area_original_value NUMERIC(10,2),
     area_unit_original VARCHAR(20),
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS properties (
     -- Other details
     images TEXT[],
     description TEXT,
+    amenities TEXT[], -- New field for list of amenities (e.g., {"Pool", "Gym", "Parking"})
 
     -- Scrape metadata
     source_url VARCHAR(2048) UNIQUE NOT NULL,
@@ -78,17 +80,14 @@ CREATE INDEX IF NOT EXISTS idx_properties_date_posted ON properties(date_posted)
 CREATE INDEX IF NOT EXISTS idx_properties_normalized_price_usd ON properties(normalized_price_usd);
 CREATE INDEX IF NOT EXISTS idx_properties_bedrooms ON properties(bedrooms);
 CREATE INDEX IF NOT EXISTS idx_properties_bathrooms ON properties(bathrooms);
+CREATE INDEX IF NOT EXISTS idx_properties_property_type ON properties(property_type); -- Index for new column
 CREATE INDEX IF NOT EXISTS idx_properties_normalized_area_sqft ON properties(normalized_area_sqft);
 CREATE INDEX IF NOT EXISTS idx_properties_latitude_longitude ON properties(latitude, longitude) WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_properties_created_at ON properties(created_at);
 CREATE INDEX IF NOT EXISTS idx_properties_source_name ON properties(source_name);
 CREATE INDEX IF NOT EXISTS idx_properties_status ON properties(status);
 CREATE INDEX IF NOT EXISTS idx_properties_duplicate_of_property_id ON properties(duplicate_of_property_id) WHERE duplicate_of_property_id IS NOT NULL;
-
--- Example GIN index for trigram similarity on title and location_text (if using pg_trgm for search)
--- CREATE INDEX IF NOT EXISTS idx_properties_title_trgm ON properties USING gin (title gin_trgm_ops);
--- CREATE INDEX IF NOT EXISTS idx_properties_location_text_trgm ON properties USING gin (location_text gin_trgm_ops);
-
+CREATE INDEX IF NOT EXISTS idx_properties_amenities ON properties USING GIN (amenities); -- GIN index for TEXT[] amenities
 
 COMMENT ON COLUMN properties.price_original_numeric IS 'Original numeric value parsed from price string, if possible.';
 COMMENT ON COLUMN properties.price_original_textual_display IS 'Original full price string as it appeared on the source, e.g., "$1500/month", "Contact for price".';
@@ -100,11 +99,13 @@ COMMENT ON COLUMN properties.latitude IS 'Latitude obtained from geocoding.';
 COMMENT ON COLUMN properties.longitude IS 'Longitude obtained from geocoding.';
 COMMENT ON COLUMN properties.geocoded_data_raw IS 'Complete JSON response from the geocoding service for transparency and future use.';
 COMMENT ON COLUMN properties.bathrooms IS 'Number of bathrooms, allowing for half-bathrooms (e.g., 2.5).';
+COMMENT ON COLUMN properties.property_type IS 'Type of property, e.g., Apartment, House, Condo, Townhouse.';
 COMMENT ON COLUMN properties.area_original_value IS 'Original numeric value for the property area as scraped.';
 COMMENT ON COLUMN properties.area_unit_original IS 'Original unit for the property area as scraped (e.g., "sqft", "m²", "acres").';
 COMMENT ON COLUMN properties.normalized_area_sqft IS 'Property area normalized to square feet, if conversion was possible.';
 COMMENT ON COLUMN properties.images IS 'Array of URLs for property images.';
 COMMENT ON COLUMN properties.description IS 'Full description of the property, potentially including HTML or rich text.';
+COMMENT ON COLUMN properties.amenities IS 'Array of amenities/features associated with the property.';
 COMMENT ON COLUMN properties.source_url IS 'The unique URL of the original listing. Serves as a unique identifier from the source.';
 COMMENT ON COLUMN properties.date_posted IS 'The date the listing was originally posted on the source site.';
 COMMENT ON COLUMN properties.source_name IS 'Identifier for the scraper or data source (e.g., "CraigslistScraper", "ZillowAPI").';
