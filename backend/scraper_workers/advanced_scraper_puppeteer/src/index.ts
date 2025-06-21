@@ -58,7 +58,7 @@ async function setupRabbitMQ(): Promise<amqp.Channel | null> {
 // --- Property Detail Scraping Function ---
 async function scrapePropertyDetails(
     detailPageUrl: string,
-    browser: Browser, // Pass browser instance to open new pages
+    browser: Browser,
     rabbitmqChannel: amqp.Channel
 ): Promise<void> {
     let detailPage: Page | null = null;
@@ -67,8 +67,11 @@ async function scrapePropertyDetails(
         detailPage = await browser.newPage();
         await detailPage.setUserAgent(`Mozilla/5.0 (${os.platform()} ${os.release()}; ${os.arch()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36`);
         await detailPage.goto(detailPageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        await detailPage.waitForSelector('.property-title', { timeout: 30000 });
 
+        // Wait for a key element to ensure page is loaded, e.g., title
+        await detailPage.waitForSelector('.property-title', { timeout: 30000 }); // Placeholder selector
+
+        // Extract existing fields (using placeholder selectors)
         const title = await detailPage.$eval('.property-title', el => el.textContent?.trim() || '').catch(() => null);
         const price = await detailPage.$eval('.property-price', el => el.textContent?.trim() || '').catch(() => null);
         const location = await detailPage.$eval('.property-location', el => el.textContent?.trim() || '').catch(() => null);
@@ -79,19 +82,51 @@ async function scrapePropertyDetails(
         const description = await detailPage.$eval('.property-description', el => el.innerHTML.trim() || '').catch(() => null);
         const datePostedText = await detailPage.$eval('.property-date-posted', el => el.textContent?.trim() || '').catch(() => null);
 
+        // Extract new fields: property_type and amenities (using placeholder selectors)
+        let property_type: string | null = null;
+        try {
+            // Placeholder selector for property type
+            property_type = await detailPage.$eval('div.details-section .property-type-value', el => el.textContent?.trim() || null);
+        } catch (e) {
+            console.warn(`Could not find property type for ${detailPageUrl}, setting to null.`);
+        }
+
+        let amenities: string[] = [];
+        try {
+            // Placeholder selector for amenities list
+            amenities = await detailPage.$$eval('ul.amenities-list li.amenity-item', els =>
+                els.map(el => el.textContent?.trim()).filter(Boolean) as string[]
+            );
+        } catch (e) {
+            console.warn(`Could not find amenities for ${detailPageUrl}, setting to empty array.`);
+        }
+
+        // Basic parsing for existing fields
         const bedrooms = bedroomsText ? parseInt(bedroomsText.match(/\d+/)?.[0] || '0') : null;
         const bathrooms = bathroomsText ? parseFloat(bathroomsText.match(/[\d.]+/)?.[0] || '0') : null;
         let date_posted: string | null = null;
-        if (datePostedText) { try { date_posted = new Date(datePostedText).toISOString(); } catch (e) { /* ignore */ } }
+        if (datePostedText) { try { date_posted = new Date(datePostedText).toISOString(); } catch (e) { console.warn(`Could not parse date: ${datePostedText}`); } }
 
+        // Construct property data object including new fields
         const propertyData = {
-            title, price_text: price, location_text: location, bedrooms, bathrooms,
-            area_text: areaText, images, description, source_url: detailPageUrl,
-            date_posted, source_name: SOURCE_NAME, scrape_timestamp: new Date().toISOString(),
+            title,
+            price_text: price, // data_processing expects this as 'price' or 'price_text'
+            location_text: location, // data_processing expects this as 'location' or 'location_text'
+            bedrooms_text: bedroomsText, // Send raw text for parsing by data_processing
+            bathrooms_text: bathroomsText, // Send raw text for parsing by data_processing
+            area_text: areaText, // Send raw text for parsing by data_processing
+            images,
+            description,
+            property_type, // New field
+            amenities,     // New field
+            source_url: detailPageUrl,
+            date_posted, // Already parsed if possible
+            source_name: SOURCE_NAME, // From env
+            scrape_timestamp: new Date().toISOString(),
         };
 
         rabbitmqChannel.sendToQueue(RABBITMQ_QUEUE, Buffer.from(JSON.stringify(propertyData)), { persistent: true });
-        console.log(`Sent to RabbitMQ: ${propertyData.title?.substring(0,50)}...`);
+        console.log(`Sent to RabbitMQ: ${propertyData.title?.substring(0,30)}... (Type: ${propertyData.property_type}, Amenities: ${amenities.length})`);
 
     } catch (error) {
         console.error(`Error scraping detail page ${detailPageUrl}:`, error);
@@ -106,23 +141,14 @@ async function scrapeSite(rabbitmqChannel: amqp.Channel): Promise<void> {
     console.log(`Starting scrape for target URL: ${TARGET_URL}`);
 
     const launchArgs = [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu'
+        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', '--disable-gpu'
     ];
     if (selectedProxy) {
         launchArgs.push(`--proxy-server=${selectedProxy}`);
     }
 
-    const browser = await puppeteer.launch({
-        headless: HEADLESS_MODE,
-        args: launchArgs,
-    });
-
+    const browser = await puppeteer.launch({ headless: HEADLESS_MODE, args: launchArgs });
     let mainPage: Page | null = null;
 
     try {
@@ -136,24 +162,24 @@ async function scrapeSite(rabbitmqChannel: amqp.Channel): Promise<void> {
         while (currentPageUrl) {
             console.log(`Scraping listing page ${pageNum}: ${currentPageUrl}`);
             await mainPage.goto(currentPageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-            await mainPage.waitForSelector('.property-item', { timeout: 30000 });
+            await mainPage.waitForSelector('.property-item', { timeout: 30000 }); // Placeholder
 
-            const propertyItems = await mainPage.$$('.property-item');
+            const propertyItems = await mainPage.$$('.property-item'); // Placeholder
             console.log(`Found ${propertyItems.length} property items on page ${pageNum}.`);
 
             for (const item of propertyItems) {
                 try {
-                    const detailLinkSelector = 'a.property-link';
+                    const detailLinkSelector = 'a.property-link'; // Placeholder
                     await item.waitForSelector(detailLinkSelector, {visible: true, timeout: 5000 });
                     const detailPageUrl = await item.$eval(detailLinkSelector, el => (el as HTMLAnchorElement).href);
                     if (detailPageUrl) {
                         await scrapePropertyDetails(detailPageUrl, browser, rabbitmqChannel);
-                    } else { console.warn('Could not find detail page URL.'); }
-                } catch (e) { console.error('Error extracting detail link:', e); }
+                    } else { console.warn('Could not find detail page URL for an item.'); }
+                } catch (e) { console.error('Error extracting detail link from item:', e); }
             }
 
             try {
-                const nextButtonSelector = '.pagination .next a';
+                const nextButtonSelector = '.pagination .next a'; // Placeholder
                 const nextButton = await mainPage.$(nextButtonSelector);
                 if (nextButton) {
                     currentPageUrl = await mainPage.$eval(nextButtonSelector, el => (el as HTMLAnchorElement).href);
@@ -184,7 +210,6 @@ async function main() {
         } catch (error) {
             console.error('Critical error during scraping process:', error);
         } finally {
-            // RabbitMQ connection is closed via SIGINT/SIGTERM handlers in setupRabbitMQ
              console.log("Scraping process complete. RabbitMQ connection will be closed on process exit.");
         }
     } else {
