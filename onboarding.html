@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Suite Onboarding</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Test Suite Onboarding</h1>
+    <form id="onboardingForm">
+        <div>
+            <label for="agentSelection">Agent Selection:</label>
+            <select id="agentSelection" name="agentSelection">
+                <option value="harness">Harness Delegator</option>
+                <option value="temporal">Temporal Agent</option>
+                <option value="default">Default Agent</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="targetURL">Target URL:</label>
+            <input type="url" id="targetURL" name="targetURL" required>
+        </div>
+
+        <div>
+            <label for="product">Product:</label>
+            <select id="product" name="product" multiple required>
+                <option value="mdm">MDM</option>
+                <option value="cai">CAI</option>
+                <option value="taskflow">TASKFLOW</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="csp">Cloud Service Provider (CSP):</label>
+            <select id="csp" name="csp" multiple required>
+                <option value="aws">AWS</option>
+                <option value="azure">AZURE</option>
+                <option value="gcp">GCP</option>
+                <option value="oracle">Oracle</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="environment">Environment:</label>
+            <select id="environment" name="environment" multiple required>
+                <option value="prod">Prod</option>
+                <option value="staging">Staging</option>
+                <option value="preview">Preview</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="podName">POD Name:</label>
+            <select id="podName" name="podName" multiple required>
+                <option value="usw1">usw1</option>
+                <option value="usw3">usw3</option>
+                <option value="usw5">usw5</option>
+                <option value="use2">use2</option>
+                <option value="use4">use4</option>
+                <option value="use6">use6</option>
+                <option value="apse1">apse1</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="testSuiteType">Test Suite Type:</label>
+            <select id="testSuiteType" name="testSuiteType" required>
+                <option value="health">Health Check Only</option>
+                <option value="functional">Functional</option>
+                <option value="full">Full Test</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="notificationEmails">Notification Emails (comma-separated):</label>
+            <input type="text" id="notificationEmails" name="notificationEmails" required>
+        </div>
+
+        <div>
+            <label>Notification Conditions:</label>
+            <input type="checkbox" id="notifySuccess" name="notificationConditions" value="success">
+            <label for="notifySuccess">Success</label>
+            <input type="checkbox" id="notifyFailure" name="notificationConditions" value="failure">
+            <label for="notifyFailure">Failure</label>
+            <input type="checkbox" id="notifyTrigger" name="notificationConditions" value="onTrigger">
+            <label for="notifyTrigger">On Trigger</label>
+            <input type="checkbox" id="notifyAll" name="notificationConditions" value="all">
+            <label for="notifyAll">All</label>
+        </div>
+
+        <div>
+            <label for="documentationLink">Documentation/Scripts Link:</label>
+            <input type="url" id="documentationLink" name="documentationLink">
+        </div>
+
+        <div>
+            <label for="documentationUpload">Upload Documentation/Scripts:</label>
+            <input type="file" id="documentationUpload" name="documentationUpload">
+        </div>
+
+        <div>
+            <label for="retryPolicies">Retry Policies:</label>
+            <input type="text" id="retryPolicies" name="retryPolicies">
+        </div>
+
+        <div>
+            <label for="timeoutValues">Timeout Values (seconds):</label>
+            <input type="number" id="timeoutValues" name="timeoutValues">
+        </div>
+
+        <button type="submit">Submit</button>
+    </form>
+
+    <div id="confirmationArea" style="display:none;">
+        <h2>Configuration Summary</h2>
+        <pre id="summaryText"></pre>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
