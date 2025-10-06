@@ -56,10 +56,9 @@ function findMatchingAlerts(config) {
  * @param {string} actionType - The action to perform ('Acknowledge' or 'Close').
  */
 function performAction(alertRow, actionType) {
-  // --- IMPORTANT ---
-  // These selectors are also placeholders.
-  const ACK_BUTTON_SELECTOR = 'button.acknowledge-button';
-  const CLOSE_BUTTON_SELECTOR = 'button.close-button';
+  // Selectors are configured for sample_alert.html. Adjust if necessary.
+  const ACK_BUTTON_SELECTOR = '.acknowledge-button';
+  const CLOSE_BUTTON_SELECTOR = '.close-button';
 
   let button;
   if (actionType === 'Acknowledge') {
@@ -68,10 +67,12 @@ function performAction(alertRow, actionType) {
     button = alertRow.querySelector(CLOSE_BUTTON_SELECTOR);
   }
 
-  if (button) {
-    console.log(`Performing action: ${actionType}`);
+  if (button && !button.disabled) {
+    console.log(`Action Triggered: Found '${actionType}' button. Clicking it.`);
     button.click();
+  } else if (button && button.disabled) {
+    console.log(`Action Skipped: Found '${actionType}' button, but it was disabled.`);
   } else {
-    console.warn(`Could not find button for action '${actionType}' in alert row.`);
+    console.warn(`Action Failed: Could not find a button for action '${actionType}'.`);
   }
 }
