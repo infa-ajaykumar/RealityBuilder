@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sample Opsgenie Alerts</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .container { max-width: 800px; margin: auto; }
+        .alert-list-item {
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+        }
+        .alert-list-item.critical { border-left: 5px solid #e53935; }
+        .alert-list-item.high { border-left: 5px solid #fb8c00; }
+        .alert-list-item.low { border-left: 5px solid #43a047; }
+        .alert-header { display: flex; justify-content: space-between; }
+        .alert-message { font-weight: bold; font-size: 1.1em; color: #333; }
+        .alert-status { font-style: italic; color: #555; }
+        .alert-details { margin-top: 10px; color: #666; }
+        .alert-actions button {
+            margin-top: 10px;
+            margin-right: 5px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            background-color: #eee;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Sample Alert Page for Testing</h1>
+        <p>Use this page to test your extension's DOM selectors. Open Chrome DevTools (Inspect) to find the correct classes.</p>
+        <p>For this example page, the selectors would be:</p>
+        <ul>
+            <li><code>ALERT_ROW_SELECTOR: '.alert-list-item'</code></li>
+            <li><code>ALERT_TEXT_SELECTOR: '.alert-message'</code></li>
+            <li><code>ACK_BUTTON_SELECTOR: 'button.acknowledge-button'</code></li>
+            <li><code>CLOSE_BUTTON_SELECTOR: 'button.close-button'</code></li>
+        </ul>
+
+        <hr>
+
+        <div id="alerts-container">
+            <!-- Example 1: An open, critical alert -->
+            <div class="alert-list-item critical">
+                <div class="alert-header">
+                    <span class="alert-message">[P1] Database CPU is high - open</span>
+                    <span class="alert-status">Status: Open</span>
+                </div>
+                <div class="alert-details">
+                    This is a critical priority alert. The main database is experiencing high CPU usage.
+                </div>
+                <div class="alert-actions">
+                    <button class="acknowledge-button">Acknowledge</button>
+                    <button class="close-button">Close</button>
+                </div>
+            </div>
+
+            <!-- Example 2: An acknowledged, high-priority alert -->
+            <div class="alert-list-item high">
+                <div class="alert-header">
+                    <span class="alert-message">[P2] API latency is elevated - acknowledged</span>
+                    <span class="alert-status">Status: Acknowledged</span>
+                </div>
+                <div class="alert-details">
+                    The primary API is showing higher than normal response times.
+                </div>
+                <div class="alert-actions">
+                    <button class="acknowledge-button" disabled>Acknowledge</button>
+                    <button class="close-button">Close</button>
+                </div>
+            </div>
+
+            <!-- Example 3: A closed, low-priority alert -->
+            <div class="alert-list-item low">
+                <div class="alert-header">
+                    <span class="alert-message">[P4] Disk space warning - closed</span>
+                    <span class="alert-status">Status: Closed</span>
+                </div>
+                <div class="alert-details">
+                    The backup server disk space is getting low. This alert is now closed.
+                </div>
+                <div class="alert-actions">
+                    <button class="acknowledge-button" disabled>Acknowledge</button>
+                    <button class="close-button" disabled>Close</button>
+                </div>
+            </div>
+             <!-- Example 4: another open, critical alert -->
+            <div class="alert-list-item critical">
+                <div class="alert-header">
+                    <span class="alert-message">[P1] Another open alert</span>
+                    <span class="alert-status">Status: Open</span>
+                </div>
+                <div class="alert-details">
+                    This is another critical priority alert that is open.
+                </div>
+                <div class="alert-actions">
+                    <button class="acknowledge-button">Acknowledge</button>
+                    <button class="close-button">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

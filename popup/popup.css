@@ -1,0 +1,120 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  width: 400px;
+  padding: 15px;
+  background-color: #f4f6f8;
+  color: #333;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+h1 {
+  font-size: 18px;
+  text-align: center;
+  margin: 0;
+  color: #0052cc;
+}
+
+h2 {
+  font-size: 16px;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 5px;
+  margin-top: 0;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+label {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.inline-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-weight: normal;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box; /* Ensures padding doesn't affect width */
+}
+
+.form-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+button {
+  flex-grow: 1;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 4px;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+button#start-monitoring {
+  background-color: #007bff;
+}
+
+button#start-monitoring:hover {
+  background-color: #0056b3;
+}
+
+button#stop-monitoring {
+  background-color: #dc3545;
+}
+
+button#stop-monitoring:disabled {
+  background-color: #a0a0a0;
+  cursor: not-allowed;
+}
+
+.monitoring-status,
+.detected-alerts {
+  border: 1px solid #e0e0e0;
+  padding: 10px;
+  border-radius: 4px;
+  background-color: #fff;
+}
+
+#status-message {
+  font-style: italic;
+  color: #555;
+}
+
+#alerts-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+#alerts-list li {
+  padding: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+#alerts-list li:last-child {
+  border-bottom: none;
+}

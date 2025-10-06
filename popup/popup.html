@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Opsgenie Alert Monitor</title>
+  <link rel="stylesheet" type="text/css" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Opsgenie Alert Monitor</h1>
+
+    <form id="config-form">
+      <div class="form-group">
+        <label for="opsgenie-url">Opsgenie URL</label>
+        <input type="text" id="opsgenie-url" name="opsgenieUrl" placeholder="https://your-org.opsgenie.com/alert" required>
+      </div>
+
+      <div class="form-group">
+        <label for="alert-type">Alert Type/Status</label>
+        <input type="text" id="alert-type" name="alertType" placeholder="e.g., open, P1, custom-class" required>
+      </div>
+
+      <div class="form-group">
+        <label for="action-type">Action to Perform</label>
+        <select id="action-type" name="actionType">
+          <option value="Acknowledge">Acknowledge</option>
+          <option value="Close">Close</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="monitoring-interval">Monitoring Interval (seconds)</label>
+        <input type="number" id="monitoring-interval" name="monitoringInterval" min="10" value="60" required>
+      </div>
+
+      <div class="form-group">
+        <label class="inline-label" for="auto-action-enabled">
+          <input type="checkbox" id="auto-action-enabled" name="autoActionEnabled">
+          Enable Auto-Action (e.g., auto-acknowledge)
+        </label>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" id="start-monitoring">Start Monitoring</button>
+        <button type="button" id="stop-monitoring" disabled>Stop Monitoring</button>
+      </div>
+    </form>
+
+    <div class="monitoring-status">
+      <h2>Monitoring Status</h2>
+      <p id="status-message">Not currently monitoring.</p>
+    </div>
+
+    <div class="detected-alerts">
+      <h2>Detected Alerts</h2>
+      <ul id="alerts-list">
+        <!-- Detected alerts will be listed here -->
+      </ul>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
